@@ -1,4 +1,5 @@
 import time
+from matplotlib import pyplot as plt
 import numpy as np
 import numpy.typing as npt
 from scipy.stats import entropy
@@ -38,19 +39,23 @@ class t_SNE:
             P /= np.sum(P, keepdims=True)
         return P
 
-    def calc_gradient(self):
+    def calc_gradient(self, joint_prob_dist):
         gradient = np.zeros((self.y.shape))
         for i in range(self.y.shape[0]):
-            term1 = self.joint_prob_dist[i,:] - self.low_dim_affinities[i,:]
+            term1 = joint_prob_dist[i,:] - self.low_dim_affinities[i,:]
             term2 = self.y[i] - self.y
             term3 = 1/(1 + np.linalg.norm(term2, axis=1))
-            gradient[i] = 4 * np.sum((term1 @ term3) * term2, axis=0)
+            gradient[i] = 4 * term1[:, np.newaxis].T @ (term2 * term3[:, np.newaxis])
+            pass
         return gradient
     
-    def compute_low_dim_affinities(self, pairwise_dist):
-        q = 1/(1 + pairwise_dist)
+    def compute_low_dim_affinities(self):
+        q = np.zeros((self.y.shape[0], self.y.shape[0]))
+        for i in range(0, self.y.shape[0]):
+            diff = self.y[i] - self.y
+            q[i, :] = 1/(1 + np.linalg.norm(diff, axis=1)**2)
         np.fill_diagonal(q, 0)
-        q = q / (np.sum(q, axis=1, keepdims=True))
+        q /= q.sum()
         q = np.maximum(q, 1e-9)
         return q
     
@@ -60,33 +65,45 @@ class t_SNE:
         initial_guess = multivariate_normal.rvs(mean, cov, size=(data_size))
         return initial_guess
     
-    def solve_optimization(self, joint_probability_dist, initial_solution):
+    def solve_optimization(self, joint_probability_dist, initial_solution, labels, plot_save_interval):
         # Optimization process:
         # Early exaggeration: coeff 4, for first 50 iterations
         # 1000 iterations
         # Momentum: 0.5 for 250 first iterations, 0.8 for 250 untill 1000.
         # Learning rate: initiated by 100, changing 
-        self.joint_prob_dist = joint_probability_dist * self.exaggeration_coef
         self.y = initial_solution
         momentum = self.momentum1
         previous_diff = 0
         for iter in range(self.T):
             print(f"Optimization: step {iter + 1}")
-            if iter == self.exaggeration_interval:
-                self.joint_prob_dist /= self.exaggeration_coef
+            if iter < self.exaggeration_interval:
+                exag_coef = self.exaggeration_coef
+            else:
+                exag_coef = 1
             if iter == self.switch_momentum_iter:
                 momentum = self.momentum2
 
             pairwise_dist = cdist(self.y, self.y, metric="sqeuclidean")
             self.low_dim_affinities = self.compute_low_dim_affinities(pairwise_dist)
 
-            gradient = self.calc_gradient()
+            gradient = self.calc_gradient(exag_coef * joint_probability_dist)
             previous_y = self.y
             self.y = self.y - self.lr * gradient + momentum * previous_diff
             previous_diff = self.y - previous_y
-            loss = np.sum(self.joint_prob_dist*np.log(self.joint_prob_dist/(self.low_dim_affinities)))
-            print(f"Loss: {loss}")
+            cost = np.sum(joint_probability_dist * np.log(joint_probability_dist/(self.low_dim_affinities)))
+            print(f"Cost: {cost}")
+            if iter % plot_save_interval == 0 or iter == self.T - 1:
+                plt.figure()
+                scatter = plt.scatter(self.y[:, 0], self.y[:, 1], c=labels, cmap='tab10', alpha=0.7)
+                plt.colorbar(scatter, label="Label")
+                filename = f"out_gif/save_{iter}.png"
+                plt.savefig(filename)
+                plt.close()
+
             # FIX: optimization doesn't work.
+            # Problems:
+            # 1. Gradient calculation
+            # 2. q_ij calculation (that's why the cost was negative)
             
     def find_sigmas_from_perp_binary_search(self, data: npt.NDArray, max_sigma = 100, min_sigma = 0.05):
         """Find the vector of sigmas from the data and perplexity"""
@@ -119,14 +136,10 @@ class t_SNE:
         print(f"Finished calculating sigmas. Took {time.time() - start} seconds")
         return sigmas
 
-    def run_algorithm(self, data):
+    def run_algorithm(self, data, labels, plot_save_interval):
         sigmas = self.find_sigmas_from_perp_binary_search(data)
         P = self.compute_pairwise_affinities(data, sigmas)
         joint_probability_dist = (P + P.T) / (2 * data.shape[0])
         joint_probability_dist = np.maximum(joint_probability_dist, 1e-9)
         initial_solution = self.sample_initial_solution(data.shape[0])
-        self.solve_optimization(joint_probability_dist, initial_solution)
-
-if __name__ == "__main__":
-    t_sne = t_SNE(40, 10, 2, 2, 2, 2)
-    t_sne.sample_initial_solution(1000)
+        self.solve_optimization(joint_probability_dist, initial_solution, labels, plot_save_interval)
