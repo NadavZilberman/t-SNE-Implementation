@@ -84,7 +84,7 @@ class t_SNE:
                 momentum = self.momentum2
 
             pairwise_dist = cdist(self.y, self.y, metric="sqeuclidean")
-            self.low_dim_affinities = self.compute_low_dim_affinities(pairwise_dist)
+            self.low_dim_affinities = self.compute_low_dim_affinities()
 
             gradient = self.calc_gradient(exag_coef * joint_probability_dist)
             previous_y = self.y
