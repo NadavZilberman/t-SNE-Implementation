@@ -14,7 +14,11 @@ class t_SNE:
                  momentum2: list[float], 
                  switch_momentum_iter: int,
                  exaggeration_coef: float, 
-                 exaggeration_interval: int):
+                 exaggeration_interval: int,
+                 tol: float,
+                 const_cost_max_iters: int,
+                 adaptive_learning_coeff: float,
+                 start_iter_of_adaptive_learning: int,
         self.perp = perplexity
         self.T = num_of_iter
         self.lr = initial_learning_rate
@@ -25,6 +29,10 @@ class t_SNE:
         self.exaggeration_interval = exaggeration_interval
         self.perp_tol = 1e-3
         self.var_initial_guess = 1e-4
+        self.tol = tol
+        self.const_cost_max_iters = const_cost_max_iters
+        self.adaptive_lr_coeff = adaptive_learning_coeff
+        self.start_iter_of_adaptive_learning = start_iter_of_adaptive_learning
 
     def compute_pairwise_affinities(self, data: npt.NDArray, sigmas: float | list[float], i: int | None=None):
         if i is None:  # compute entire matrix
@@ -66,24 +74,29 @@ class t_SNE:
         return initial_guess
     
     def solve_optimization(self, joint_probability_dist, initial_solution, labels, plot_save_interval):
-        # Optimization process:
-        # Early exaggeration: coeff 4, for first 50 iterations
-        # 1000 iterations
-        # Momentum: 0.5 for 250 first iterations, 0.8 for 250 untill 1000.
-        # Learning rate: initiated by 100, changing 
         self.y = initial_solution
         momentum = self.momentum1
         previous_diff = 0
+        previous_cost = 0
+        no_change_in_cost_counter = 0
         for iter in range(self.T):
             print(f"Optimization: step {iter + 1}")
+            # determine exaggeration coeff
             if iter < self.exaggeration_interval:
                 exag_coef = self.exaggeration_coef
             else:
                 exag_coef = 1
+            # determine momentum
             if iter == self.switch_momentum_iter:
                 momentum = self.momentum2
 
-            pairwise_dist = cdist(self.y, self.y, metric="sqeuclidean")
+            # determine (adaptive) learning rate
+            if no_change_in_cost_counter == self.const_cost_max_iters:
+                if iter > self.start_iter_of_adaptive_learning:
+                    print(f"Got constant cost, dividing learning rate by {self.adaptive_lr_coeff}.")
+                    self.lr /= self.adaptive_lr_coeff
+                no_change_in_cost_counter = 0
+
             self.low_dim_affinities = self.compute_low_dim_affinities()
 
             gradient = self.calc_gradient(exag_coef * joint_probability_dist)
@@ -92,6 +105,12 @@ class t_SNE:
             previous_diff = self.y - previous_y
             cost = np.sum(joint_probability_dist * np.log(joint_probability_dist/(self.low_dim_affinities)))
             print(f"Cost: {cost}")
+            if np.abs(cost - previous_cost) < self.tol:
+                no_change_in_cost_counter += 1
+            else:
+                no_change_in_cost_counter = 0
+            previous_cost = cost
+            # save scatter plot of   y
             if iter % plot_save_interval == 0 or iter == self.T - 1:
                 plt.figure()
                 scatter = plt.scatter(self.y[:, 0], self.y[:, 1], c=labels, cmap='tab10', alpha=0.7)

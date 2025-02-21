@@ -11,16 +11,17 @@ def main():
     dataloader.images_to_vectors()
     dataloader.normalize_data()
     dataloader.pca_data()
-    plot_save_interval = 25
+    plot_save_interval = 25  # every 25 iterations
     # Initiate t-SNE algorithm
     t_sne = t_SNE(perplexity=40, 
                   num_of_iter=1000, 
                   initial_learning_rate=100, 
                   momentum1=0.5,
                   momentum2=0.8,
-                  switch_momentum_iter=250,
-                  exaggeration_coef=4, 
-                  exaggeration_interval=100)
+                  tol=1e-4,
+                  const_cost_max_iters=3,
+                  adaptive_learning_coeff=2,
+                  start_iter_of_adaptive_learning=150,
 
     t_sne.run_algorithm(dataloader.data, dataloader.labels, plot_save_interval)
     results = t_sne.y
@@ -43,5 +44,5 @@ def create_gif(total_iterations: int, save_interval: int, duration: float):
     imageio.mimsave(gif_filename, images, duration=duration)
 
 if __name__ == "__main__":
-    # main()
+    main()
     create_gif(total_iterations=1000, save_interval=25, duration=15)
