@@ -19,6 +19,10 @@ class t_SNE:
                  const_cost_max_iters: int,
                  adaptive_learning_coeff: float,
                  start_iter_of_adaptive_learning: int,
+                 early_comp_end_iter,
+                 early_comp_coeff
+                 ):
+
         self.perp = perplexity
         self.T = num_of_iter
         self.lr = initial_learning_rate
@@ -33,6 +37,8 @@ class t_SNE:
         self.const_cost_max_iters = const_cost_max_iters
         self.adaptive_lr_coeff = adaptive_learning_coeff
         self.start_iter_of_adaptive_learning = start_iter_of_adaptive_learning
+        self.early_comp_end_iter = early_comp_end_iter
+        self.early_comp_coeff = early_comp_coeff
 
     def compute_pairwise_affinities(self, data: npt.NDArray, sigmas: float | list[float], i: int | None=None):
         if i is None:  # compute entire matrix
@@ -57,6 +63,9 @@ class t_SNE:
             pass
         return gradient
     
+    def early_comp_gradient(self):
+        return 2 * self.early_comp_coeff * self.y
+
     def compute_low_dim_affinities(self):
         q = np.zeros((self.y.shape[0], self.y.shape[0]))
         for i in range(0, self.y.shape[0]):
@@ -64,7 +73,7 @@ class t_SNE:
             q[i, :] = 1/(1 + np.linalg.norm(diff, axis=1)**2)
         np.fill_diagonal(q, 0)
         q /= q.sum()
-        q = np.maximum(q, 1e-9)
+        q = np.maximum(q, 1e-14)
         return q
     
     def sample_initial_solution(self, data_size: int):
@@ -100,15 +109,21 @@ class t_SNE:
             self.low_dim_affinities = self.compute_low_dim_affinities()
 
             gradient = self.calc_gradient(exag_coef * joint_probability_dist)
+            if iter < self.early_comp_end_iter:
+                gradient += self.early_comp_gradient()
             previous_y = self.y
             self.y = self.y - self.lr * gradient + momentum * previous_diff
             previous_diff = self.y - previous_y
             cost = np.sum(joint_probability_dist * np.log(joint_probability_dist/(self.low_dim_affinities)))
+            # add early compression cost
+            if iter < self.early_comp_end_iter:
+                cost += self.early_comp_coeff * np.sum(np.power(self.y, 2))
             print(f"Cost: {cost}")
             if np.abs(cost - previous_cost) < self.tol:
                 no_change_in_cost_counter += 1
             else:
                 no_change_in_cost_counter = 0
+
             previous_cost = cost
             # save scatter plot of   y
             if iter % plot_save_interval == 0 or iter == self.T - 1:
@@ -119,11 +134,6 @@ class t_SNE:
                 plt.savefig(filename)
                 plt.close()
 
-            # FIX: optimization doesn't work.
-            # Problems:
-            # 1. Gradient calculation
-            # 2. q_ij calculation (that's why the cost was negative)
-            
     def find_sigmas_from_perp_binary_search(self, data: npt.NDArray, max_sigma = 100, min_sigma = 0.05):
         """Find the vector of sigmas from the data and perplexity"""
         start = time.time()
@@ -159,6 +169,6 @@ class t_SNE:
         sigmas = self.find_sigmas_from_perp_binary_search(data)
         P = self.compute_pairwise_affinities(data, sigmas)
         joint_probability_dist = (P + P.T) / (2 * data.shape[0])
-        joint_probability_dist = np.maximum(joint_probability_dist, 1e-9)
-        initial_solution = self.sample_initial_solution(data.shape[0])
+        joint_probability_dist = np.maximum(joint_probability_dist, 1e-14)
+        initial_solution = self.sample_initial_solution(data_size=data.shape[0])
         self.solve_optimization(joint_probability_dist, initial_solution, labels, plot_save_interval)
