@@ -43,7 +43,7 @@ class t_SNE:
     def compute_pairwise_affinities(self, data: npt.NDArray, sigmas: float | list[float], i: int | None=None):
         if i is None:  # compute entire matrix
             dist_sq = cdist(data, data, metric='sqeuclidean')
-            P = np.exp(-dist_sq / (2*sigmas**2))
+            P = np.exp(-dist_sq / (2*sigmas**2), dtype=np.float32)
             np.fill_diagonal(P, 0)
             P /= np.sum(P, axis=1, keepdims=True)
         else:  # compute for certain i
@@ -58,7 +58,7 @@ class t_SNE:
         for i in range(self.y.shape[0]):
             term1 = joint_prob_dist[i,:] - self.low_dim_affinities[i,:]
             term2 = self.y[i] - self.y
-            term3 = 1/(1 + np.linalg.norm(term2, axis=1))
+            term3 = 1/(1 + np.linalg.norm(term2, axis=1) ** 2)
             gradient[i] = 4 * term1[:, np.newaxis].T @ (term2 * term3[:, np.newaxis])
             pass
         return gradient
@@ -67,7 +67,7 @@ class t_SNE:
         return 2 * self.early_comp_coeff * self.y
 
     def compute_low_dim_affinities(self):
-        q = np.zeros((self.y.shape[0], self.y.shape[0]))
+        q = np.zeros((self.y.shape[0], self.y.shape[0]), dtype=np.float32)
         for i in range(0, self.y.shape[0]):
             diff = self.y[i] - self.y
             q[i, :] = 1/(1 + np.linalg.norm(diff, axis=1)**2)
@@ -95,6 +95,7 @@ class t_SNE:
                 exag_coef = self.exaggeration_coef
             else:
                 exag_coef = 1
+            actual_joint_probability_dist = exag_coef * joint_probability_dist
             # determine momentum
             if iter == self.switch_momentum_iter:
                 momentum = self.momentum2
@@ -108,13 +109,13 @@ class t_SNE:
 
             self.low_dim_affinities = self.compute_low_dim_affinities()
 
-            gradient = self.calc_gradient(exag_coef * joint_probability_dist)
+            gradient = self.calc_gradient(actual_joint_probability_dist)
             if iter < self.early_comp_end_iter:
                 gradient += self.early_comp_gradient()
             previous_y = self.y
             self.y = self.y - self.lr * gradient + momentum * previous_diff
             previous_diff = self.y - previous_y
-            cost = np.sum(joint_probability_dist * np.log(joint_probability_dist/(self.low_dim_affinities)))
+            cost = np.sum(actual_joint_probability_dist * np.log(actual_joint_probability_dist/(self.low_dim_affinities)))
             # add early compression cost
             if iter < self.early_comp_end_iter:
                 cost += self.early_comp_coeff * np.sum(np.power(self.y, 2))

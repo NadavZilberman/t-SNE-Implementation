@@ -10,7 +10,7 @@ def run_on_mnist():
     dataloader.load_dataset()
     dataloader.images_to_vectors()
     dataloader.normalize_data()
-    dataloader.pca_data(degree=20)
+    dataloader.pca_data(degree=30)
     plot_save_interval = 25  # every 25 iterations
     # Initiate t-SNE algorithm
     t_sne = t_SNE(perplexity=20, 
